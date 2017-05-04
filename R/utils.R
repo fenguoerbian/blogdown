@@ -7,14 +7,28 @@
 serve_site = function(...) {
   build_site(TRUE)
   pdir = publish_dir(); n = nchar(pdir)
-  servr::httw(site.dir = pdir, handler = function(...) {
+  servr::httw(site.dir = pdir, baseurl = site_base_dir(), handler = function(...) {
     files = c(...)
     # exclude changes in the publish dir
     files = files[substr(files, 1, n) != pdir]
     # re-generate only if Rmd/md or config files or layouts were updated
-    if (length(grep('^(themes|layouts|static)/|[.](R?md|toml|yaml)$', files)))
+    if (length(grep('^(themes|layouts|static)/|[.]([Rr]?md|toml|yaml)$', files)))
       build_site(TRUE)
   }, ...)
+}
+
+# figure out the base dir of the website, e.g. http://example.com/project/ ->
+# project/, so that serve_site() works as a local server when the website is to
+# be generated to a subdirectory of a domain (see the baseurl argument of
+# servr::httw())
+site_base_dir = function() {
+  config = load_config()
+  # baseurl is not meaningful when using relative URLs
+  if (get_config('relativeurls', FALSE, config)) return('/')
+  x = get_config('baseurl', '/', config)
+  x = gsub('^(https?://[^/]+)?/', '', x)
+  if (!grepl('^/', x)) x = paste0('/', x)
+  x
 }
 
 pkg_file = function(..., mustWork = TRUE) {
@@ -67,27 +81,32 @@ is_linux = function() Sys.info()[['sysname']] == 'Linux'
 # download.file() cannot download Github release assets:
 # https://stat.ethz.ch/pipermail/r-devel/2016-June/072852.html
 download2 = function(url, ...) {
+  download = function(method = 'auto', extra = getOption('download.file.extra')) {
+    download.file(url, ..., method = method, extra = extra)
+  }
   if (is_windows())
-    return(tryCatch(download.file(url, method = 'wininet', ...), error = function(e) {
-      download.file(url, ...)  # try default method if wininet fails
+    return(tryCatch(download(method = 'wininet'), error = function(e) {
+      download()  # try default method if wininet fails
     }))
 
+  R340 = getRversion() >= '3.4.0'
+  if (R340 && download() == 0) return(0L)
   # if non-Windows, check for libcurl/curl/wget/lynx, call download.file with
   # appropriate method
+  res = NA
   if (Sys.which('curl') != '') {
-    method = 'curl'
     # curl needs to add a -L option to follow redirects
-    opts = options(download.file.extra = paste('-L', getOption('download.file.extra')))
-    on.exit(options(opts), add = TRUE)
-  } else if (Sys.which('wget') != '') {
-    method = 'wget'
-  } else if (Sys.which('lynx') != '') {
-    method = 'lynx'
-  } else {
-    stop('no download method found (wget/curl/lynx)')
+    if ((res <- download(method = 'curl', extra = '-L')) == 0) return(res)
   }
+  if (Sys.which('wget') != '') {
+    if ((res <- download.file(method = 'wget')) == 0) return(res)
+  }
+  if (Sys.which('lynx') != '') {
+    if ((res <- download.file(method = 'lynx')) == 0) return(res)
+  }
+  if (is.na(res)) stop('no download method found (wget/curl/lynx)')
 
-  download.file(url, method = method, ...)
+  res
 }
 
 opts = knitr:::new_defaults()
@@ -175,8 +194,8 @@ open_file = function(x) {
   tryCatch(rstudioapi::navigateToFile(x), error = function(e) file.edit(x))
 }
 
-dash_filename = function(string) {
-  tolower(gsub('^-+|-+$', '', gsub('[^[:alnum:]]+', '-', string)))
+dash_filename = function(string, pattern = '[^[:alnum:]]+') {
+  tolower(gsub('^-+|-+$', '', gsub(pattern, '-', string)))
 }
 
 post_filename = function(title, subdir, rmd, date) {
@@ -185,14 +204,16 @@ post_filename = function(title, subdir, rmd, date) {
   if (is.null(subdir) || subdir == '') subdir = '.'
   d = if (d == '.') subdir else file.path(subdir, d)
   d = gsub('/+$', '', d)
+  if (length(date) == 0 || is.na(date)) date = ''
+  date = format(date)
   # FIXME: this \\d{4} will be problematic in about 8000 years
-  if (!grepl('^\\d{4}-\\d{2}-\\d{2}-', f)) f = paste(format(date), f, sep = '-')
+  if (date != '' && !grepl('^\\d{4}-\\d{2}-\\d{2}-', f)) f = paste(date, f, sep = '-')
   gsub('^([.]/)+', '', file.path(d, f))
 }
 
 # give a filename, return a slug by removing the date and extension
 post_slug = function(x) {
-  gsub('^\\d{4}-\\d{2}-\\d{2}-|[.][[:alnum:]]+$', '', basename(x))
+  trim_ws(gsub('^\\d{4}-\\d{2}-\\d{2}-|[.][[:alnum:]]+$', '', basename(x)))
 }
 
 trim_ws = function(x) gsub('^\\s+|\\s+$', '', x)
@@ -291,3 +312,51 @@ filter_list = function(x) {
 sort2 = function(x, ...) {
   if (length(x) == 0) x else sort(x, ...)
 }
+
+# on Windows, try system2(), system(), and shell() in turn, and see which
+# succeeds, then remember it (https://github.com/rstudio/blogdown/issues/82)
+if (is_windows()) system2 = function(command, args = character(), stdout = '', ...) {
+  cmd = paste(c(shQuote(command), args), collapse = ' ')
+  intern = isTRUE(stdout)
+  shell2 = function() shell(cmd, mustWork = TRUE, intern = intern)
+
+  i = getOption('blogdown.windows.shell', 'system2')
+  if (i == 'shell') return(shell2())
+  if (i == 'system') return(system(cmd, intern = intern))
+
+  if (intern) return(
+    tryCatch(base::system2(command, args, stdout = stdout, ...), error = function(e) {
+      tryCatch({
+        system(cmd, intern = intern)
+        options(blogdown.windows.shell = 'system')
+      }, error = function(e) {
+        shell2()
+        options(blogdown.windows.shell = 'shell')
+      })
+    })
+  )
+
+  if ((res <- base::system2(command, args, ...)) == 0) return(invisible(res))
+
+  if ((res <- system(cmd)) == 0) {
+    options(blogdown.windows.shell = 'system')
+  } else if ((res <- shell2()) == 0) {
+    options(blogdown.windows.shell = 'shell')
+  }
+  invisible(res)
+}
+
+# replace random HTML widgets IDs with incremental numbers
+clean_widget_html = function(x) {
+  r = '(?<=id="htmlwidget-)[a-z0-9]{10,}(?=")'
+  m = gregexpr(r, x, perl = TRUE)
+  id = unique(unlist(regmatches(x, m)))
+  for (i in seq_along(id)) {
+    r = sprintf(' (id|data-for)(="htmlwidget-)%s(")', id[i])
+    x = gsub(r, sprintf(' \\1\\2%d\\3', i), x)
+  }
+  x
+}
+
+decode_uri = function(...) httpuv::decodeURIComponent(...)
+encode_uri = function(...) httpuv::encodeURIComponent(...)

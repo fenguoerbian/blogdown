@@ -33,9 +33,16 @@ hugo_build = function(local = FALSE, config = load_config()) {
     on.exit(writeUTF8(oconf$text, oconf$file), add = TRUE)
   }
   hugo_cmd(c(
-    if (local) c('-b', '/', '-D', '-F'), '-d', shQuote(publish_dir(config)), '-t',
-    get_config('theme', list.files(get_config('themesDir', 'themes', config))[1], config)
+    if (local) c('-b', site_base_dir(), '-D', '-F'),
+    '-d', shQuote(publish_dir(config)), theme_flag(config)
   ))
+}
+
+theme_flag = function(config) {
+  d = list.files(get_config('themesDir', 'themes', config))
+  d = if (length(d) > 0) d[1]
+  theme = get_config('theme', d, config)
+  if (length(theme) == 1) c('-t', theme)
 }
 
 # in theory, we should use environment variables HUGO_FOO, but it does seem to
@@ -81,7 +88,9 @@ change_config = function(name, value) {
 #' @param sample Whether to add sample content. Hugo creates an empty site by
 #'   default, but this function adds sample content by default).
 #' @param theme A Hugo theme on Github (a chararacter string of the form
-#'   \code{user/repo}).
+#'   \code{user/repo}, and you can optionally sepecify a GIT branch or tag name
+#'   after \code{@@}, i.e. \code{theme} can be of the form
+#'   \code{user/repo@@branch}).
 #' @param theme_example Whether to copy the example in the \file{exampleSite}
 #'   directory if it exists in the theme. Not all themes provide example sites.
 #' @param serve Whether to start a local server to serve the site.
@@ -113,6 +122,8 @@ new_site = function(
     if (interactive() && getOption('blogdown.open_sample', TRUE))
       open_file('content/post/2015-07-23-r-rmarkdown.Rmd')
   }
+  if (!file.exists('index.Rmd'))
+    writeLines(c('---', 'site: blogdown:::blogdown_site', '---'), 'index.Rmd')
   if (serve) serve_site()
 }
 
@@ -125,15 +136,19 @@ new_site = function(
 #'   configurations.
 #' @export
 install_theme = function(theme, theme_example = FALSE, update_config = TRUE) {
-  if (!is.character(theme) || length(theme) != 1 || !grepl('^[^/]+/[^/]+$', theme)) {
-    warning("'theme' must be a character string of the form 'user/repo'")
+  r = '^([^/]+/[^/@]+)(@.+)?$'
+  if (!is.character(theme) || length(theme) != 1 || !grepl(r, theme)) {
+    warning("'theme' must be a character string of the form 'user/repo' or 'user/repo@branch'")
     return(invisible())
   }
+  branch = sub('^@', '', gsub(r, '\\2', theme))
+  if (branch == '') branch = 'master'
+  theme = gsub(r, '\\1', theme)
   dir_create('themes')
   in_dir('themes', {
     zipfile = sprintf('%s.zip', basename(theme))
     download2(
-      sprintf('https://github.com/%s/archive/master.zip', theme), zipfile, mode = 'wb'
+      sprintf('https://github.com/%s/archive/%s.zip', theme, branch), zipfile, mode = 'wb'
     )
     files = utils::unzip(zipfile)
     zipdir = dirname(files[1])
@@ -141,7 +156,7 @@ install_theme = function(theme, theme_example = FALSE, update_config = TRUE) {
     if (theme_example && dir_exists(expdir)) {
       file.copy(list.files(expdir, full.names = TRUE), '../', recursive = TRUE)
     }
-    file.rename(zipdir, gsub('-master$', '', zipdir))
+    file.rename(zipdir, gsub(sprintf('-%s$', branch), '', zipdir))
     unlink(zipfile)
   })
   if (update_config) return(change_config('theme', sprintf('"%s"', basename(theme))))

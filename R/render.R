@@ -90,6 +90,7 @@ build_rmds = function(files, config, local, raw = FALSE) {
   } else dir_copy(lib2[i], lib1[i])
 
   root = getwd()
+  base = site_base_dir()
   for (f in files) in_dir(d <- dirname(f), {
     f = basename(f)
     html = with_ext(f, 'html')
@@ -97,7 +98,9 @@ build_rmds = function(files, config, local, raw = FALSE) {
     if (local && !require_rebuild(html, f)) next
     render_page(f)
     x = readUTF8(html)
-    x = encode_paths(x, by_products(f, '_files'), d, raw, root)
+    x = encode_paths(x, by_products(f, '_files'), d, raw, root, base)
+    if (getOption('blogdown.widgetsID', TRUE)) x = clean_widget_html(x)
+    if (raw) x = split_html_tokens(x, FALSE)$body
     writeUTF8(c(fetch_yaml2(f), '', x), html)
   })
 
@@ -131,24 +134,21 @@ render_page = function(input) {
 
 # example values of arguments: x = <html> code; deps = '2017-02-14-foo_files';
 # parent = 'content/post'; root = ~/Websites/Frida/
-encode_paths = function(x, deps, parent, raw = TRUE, root) {
+encode_paths = function(x, deps, parent, raw = TRUE, root, base = '/') {
   if (!dir_exists(deps)) return(x)
   # find the dependencies referenced in HTML, add a marker ##### to their paths
   r = paste0('(<img src|<script src|<link href)(=")(', deps, '/)')
   if (!raw) return(gsub(r, paste0('\\1\\2#####', parent, '/\\3'), x))
 
-  # remove special tokens
-  i = grep('<!-- /?BLOGDOWN-(HEAD|BODY-BEFORE) -->', x)
-  if (length(i)) x = x[-i]
   # move figures to /static/path/to/post/foo_files/figure-html
   r1 = paste0(r, '(figure-html/)')
-  x = gsub(r1, paste0('\\1\\2', gsub('^content', '', parent), '/\\3\\4'), x)
+  x = gsub(r1, paste0('\\1\\2', gsub('^content/', base, parent), '/\\3\\4'), x)
   # move other HTML dependencies to /static/rmarkdown-libs/
   r2 = paste0(r, '([^/]+)/')
   x2 = grep(r2, x, value = TRUE)
   if (length(x2) == 0) return(x)
   libs = unique(gsub(r2, '\\3\\4', unlist(regmatches(x2, gregexpr(r2, x2)))))
-  x = gsub(r2, '\\1\\2/rmarkdown-libs/\\4/', x)
+  x = gsub(r2, sprintf('\\1\\2%srmarkdown-libs/\\4/', base), x)
   to = file.path(root, 'static', 'rmarkdown-libs', basename(libs))
   dirs_copy(libs, to)
   unlink(libs, recursive = TRUE)
@@ -160,7 +160,7 @@ decode_paths = function(x, dcur, env, root) {
   m = gregexpr(r, x)
   regmatches(x, m) = lapply(regmatches(x, m), function(p) {
     if (length(p) == 0) return(p)
-    path = gsub(r, '\\2', p)
+    path = decode_uri(gsub(r, '\\2', p))
     path = file.path(root, path)
     d0 = gsub('^(.+_files)/.+', '\\1', path)
 
@@ -184,7 +184,7 @@ decode_paths = function(x, dcur, env, root) {
 
     env$dirs = c(env$dirs, unique(d0))
 
-    paste0(gsub(r, '\\1="', p), path, '"')
+    paste0(gsub(r, '\\1="', p), encode_uri(path), '"')
   })
   x
 }
@@ -224,14 +224,8 @@ process_page = function(f, env, local = FALSE, root) {
     x = decode_paths_xml(x, root)
     return(writeUTF8(x, f))
   }
-  i1 = grep('<!-- BLOGDOWN-BODY-BEFORE -->', x)
-  if (length(i1) == 0) return()
-  i2 = grep('<!-- /BLOGDOWN-BODY-BEFORE -->', x)
-  i3 = grep('<!-- BLOGDOWN-HEAD -->', x)
-  i4 = grep('<!-- /BLOGDOWN-HEAD -->', x)
-  i5 = (i3 + 1):(i4 - 1)
-  h = paste(x[i5], collapse = '\n')
-  x = x[-c(i1, i2, i3, i4, i5)]
+  res = split_html_tokens(x)
+  x = res$body; h = res$head
   # if you have provided a token in your Hugo template, I'll use it, otherwise I
   # will insert the head code introduced by HTML dependencies before </head>
   i6 = grep('<!-- RMARKDOWN-HEADER -->', x)
@@ -241,4 +235,17 @@ process_page = function(f, env, local = FALSE, root) {
   }
   x = decode_paths(x, dirname(f), env, root)
   writeUTF8(x, f)
+}
+
+split_html_tokens = function(x, extract_head = TRUE) {
+  i1 = grep('<!-- BLOGDOWN-HEAD -->', x)
+  i2 = grep('<!-- /BLOGDOWN-HEAD -->', x)
+  if (length(i1) * length(i2) != 1) return(list(body = x))
+  if (extract_head) {
+    i3 = (i1 + 1):(i2 - 1)
+    h = paste(x[i3], collapse = '\n')
+  } else {
+    i3 = h = NULL
+  }
+  list(body = x[-c(i1, i2, i3)], head = h)
 }
