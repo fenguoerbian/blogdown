@@ -2,7 +2,8 @@
 #'
 #' Download the appropriate Hugo executable for your platform from Github and
 #' try to copy it to a system directory so \pkg{blogdown} can run the
-#' \command{hugo} command to build a site.
+#' \command{hugo} command to build a site. \code{update_hugo()} is a wrapper of
+#' \code{install_hugo(force = TRUE)}.
 #'
 #' This function tries to install Hugo to \code{Sys.getenv('APPDATA')} on
 #' Windows, \file{~/Library/Application Support} on macOS, and \file{~/bin/} on
@@ -15,32 +16,39 @@
 #' executable for your operating system, especially if you are not on Windows or
 #' Mac or a major Linux distribution. When in doubt, read the Hugo documentation
 #' and install it by yourself: \url{https://gohugo.io}.
-#' @param version The Hugo version number, e.g., \code{0.17}; the special value
+#' @param version The Hugo version number, e.g., \code{0.26}; the special value
 #'   \code{latest} means the latest version (fetched from Github releases).
 #' @param use_brew Whether to use Homebrew (\url{https://brew.sh}) on macOS to
-#'   install Hugo (recommended because it is much easier to manage packages).
-#'   Note Homebrew will be automatically installed if it has not been installed.
+#'   install Hugo (recommended if you have already installed Homebrew). Note
+#'   Homebrew will be automatically installed if it has not been installed when
+#'   \code{use_brew = TRUE}.
 #' @param force Whether to install Hugo even if it has already been installed.
 #'   This may be useful when upgrading Hugo (if you use Homebrew, run the
 #'   command \command{brew update && brew upgrade} instead).
 #' @export
-install_hugo = function(version = 'latest', use_brew = TRUE, force = FALSE) {
+install_hugo = function(
+  version = 'latest', use_brew = Sys.which('brew') != '', force = FALSE
+) {
 
-  if (Sys.which('hugo') != '' && !force) return(invisible())
+  if (Sys.which('hugo') != '' && !force) {
+    message('It seems Hugo has been installed. Use force = TRUE to reinstall or upgrade.')
+    return(invisible())
+  }
 
   # in theory, should access the Github API using httr/jsonlite but this
   # poor-man's version may work as well
   if (version == 'latest') {
-    json = readLines(
-      'https://api.github.com/repos/spf13/hugo/releases/latest', warn = FALSE
-    )
-    r = '^.*?"tag_name":\\s*"([^"]+)",.*'
-    version = gsub(r, '\\1', grep(r, json, value = TRUE)[1])
-  }
+    h = readLines('https://github.com/gohugoio/hugo/releases/latest', warn = FALSE)
+    r = '^.*?releases/tag/v([0-9.]+)".*'
+    version = gsub(r, '\\1', grep(r, h, value = TRUE)[1])
+    message('The latest Hugo version is ', version)
+  } else if (use_brew) warning(
+    "when use_brew = TRUE, only the latest version of Hugo can be installed"
+  )
   version = gsub('^[vV]', '', version)  # pure version number
   version2 = as.numeric_version(version)
   bit = if (grepl('64', Sys.info()[['machine']])) '64bit' else '32bit'
-  base = sprintf('https://github.com/spf13/hugo/releases/download/v%s/', version)
+  base = sprintf('https://github.com/gohugoio/hugo/releases/download/v%s/', version)
   owd = setwd(tempdir())
   on.exit(setwd(owd), add = TRUE)
   unlink(sprintf('hugo_%s*', version), recursive = TRUE)
@@ -96,6 +104,10 @@ install_hugo = function(version = 'latest', use_brew = TRUE, force = FALSE) {
   )
   message('Hugo has been installed to ', normalizePath(destdir))
 }
+
+#' @export
+#' @rdname install_hugo
+update_hugo = function() install_hugo(force = TRUE)
 
 brew_hugo = function() {
   install = function() system('brew update && brew reinstall hugo')

@@ -7,25 +7,32 @@
 \alias{new_site}
 \alias{new_content}
 \alias{new_post}
+\alias{hugo_convert}
+\alias{hugo_server}
 \title{Run Hugo commands}
 \usage{
 hugo_cmd(...)
 
 hugo_version()
 
-hugo_build(local = FALSE, config = load_config())
+hugo_build(local = FALSE)
 
 new_site(dir = ".", install_hugo = TRUE, format = "toml", 
     sample = TRUE, theme = "yihui/hugo-lithium-theme", theme_example = TRUE, 
-    serve = TRUE)
+    serve = interactive())
 
 new_content(path, kind = "default", open = interactive())
 
 new_post(title, kind = "default", open = interactive(), 
     author = getOption("blogdown.author"), categories = NULL, 
-    tags = NULL, date = Sys.Date(), file = NULL, slug = "", 
-    subdir = getOption("blogdown.subdir", "post"), rmd = getOption("blogdown.rmd", 
-        FALSE))
+    tags = NULL, date = Sys.Date(), file = NULL, slug = NULL, 
+    subdir = getOption("blogdown.subdir", "post"), ext = getOption("blogdown.ext", 
+        ".md"))
+
+hugo_convert(to = c("YAML", "TOML", "JSON"), unsafe = FALSE, 
+    ...)
+
+hugo_server(host, port)
 }
 \arguments{
 \item{...}{Arguments to be passed to \code{system2('hugo', ...)}, e.g.
@@ -35,9 +42,6 @@ run the command \command{hugo new path}).}
 \item{local}{Whether to build the site for local preview (if \code{TRUE}, all
 drafts and future posts will also be built, and the site configuration
 \code{baseurl} will be set to \code{/} temporarily).}
-
-\item{config}{A list of the site configurations (by default, read from
-\file{config.toml} or \file{config.yaml}).}
 
 \item{dir}{The directory of the new site. It should be empty or only contain
 hidden files, RStudio project (\file{*.Rproj}) files, \file{LICENSE},
@@ -55,7 +59,8 @@ default, but this function adds sample content by default).}
 \item{theme}{A Hugo theme on Github (a chararacter string of the form
 \code{user/repo}, and you can optionally sepecify a GIT branch or tag name
 after \code{@}, i.e. \code{theme} can be of the form
-\code{user/repo@branch}).}
+\code{user/repo@branch}). If \code{theme = NA}, no themes will be
+installed, and you have to manually install a theme.}
 
 \item{theme_example}{Whether to copy the example in the \file{exampleSite}
 directory if it exists in the theme. Not all themes provide example sites.}
@@ -86,14 +91,26 @@ characters with dashes, e.g. \code{title = 'Hello World'} may create a file
 \code{YYYY-mm-dd} will be prepended if the filename does not start with a
 date.}
 
-\item{slug}{The slug of the post.}
+\item{slug}{The slug of the post. By default (\code{NULL}), the slug is
+generated from the filename by removing the date and filename extension,
+e.g., if \code{file = 'post/2015-07-23-hi-there.md'}, \code{slug} will be
+\code{hi-there}. Set \code{slug = ''} if you do not want it.}
 
 \item{subdir}{If specified (not \code{NULL}), the post will be generated
 under a subdirectory under \file{content/}. It can be a nested subdirectory
 like \file{post/joe/}.}
 
-\item{rmd}{Whether to create an R Markdown (.Rmd) or plain Markdown (.md)
-file. Ignored if \code{file} has been specified.}
+\item{ext}{The filename extension (e.g., \file{.md}, \file{.Rmd}, or
+\file{.Rmarkdown}). Ignored if \code{file} has been specified.}
+
+\item{to}{A format to convert to.}
+
+\item{unsafe}{Whether to enable unsafe operations, such as overwriting
+Markdown source documents. If you have backed up the website, or the
+website is under version control, you may try \code{unsafe = TRUE}.}
+
+\item{host, port}{The host IP address and port; see
+\code{servr::\link{server_config}()}.}
 }
 \description{
 Wrapper functions to run Hugo commands via \code{\link{system2}('hugo',
@@ -116,14 +133,23 @@ site}. The directory of the new site should be empty,
 \item \code{new_content}: Create a new (R) Markdown file via \command{hugo new}
 (e.g. a post or a page).
 
-\item \code{new_post}: A wrapper function to create a new (R) Markdown post
-under the \file{content/post/} directory via \code{new_content()}. If your
-post will use R code chunks, you can set \code{rmd = TRUE} or the global
-option \code{options(blogdown.rmd = TRUE)} in your \file{~/.Rprofile}.
+\item \code{new_post}: A wrapper function to create a new post under the
+\file{content/post/} directory via \code{new_content()}. If your post will
+use R code chunks, you can set \code{ext = '.Rmd'} or the global option
+\code{options(blogdown.ext = '.Rmd')} in your \file{~/.Rprofile}.
 Similarly, you can set \code{options(blogdown.author = 'Your Name')} so
 that the author field is automatically filled out when creating a new post.
+
+\item \code{hugo_convert}: A wrapper function to convert source content to
+different formats via \command{hugo convert}.
+
+\item \code{hugo_server}: Start a Hugo server.
 }}
 
+\examples{
+library(blogdown)
+if (interactive()) new_site()
+}
 \references{
 The full list of Hugo commands: \url{https://gohugo.io/commands},
   and themes: \url{http://themes.gohugo.io}.
